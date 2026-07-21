@@ -1,0 +1,24 @@
+{
+  "types": [
+    {
+      "type": "coding",
+      "model": "claude-sonnet-4-20250514",
+      "provider": "anthropic",
+      "effort": "high",
+      "desc": "General coding, refactoring, implementation tasks"
+    },
+    {
+      "type": "browser_testing",
+      "model": "gpt-4.1-nano",
+      "provider": "openai",
+      "effort": "low",
+      "desc": "Specialized for browser automation. Very small, cheap, fast. Good at following specific instructions."
+    },
+    {
+      "type": "exploring",
+      "model": "gemini-2.5-pro",
+      "provider": "google",
+      "desc": "Large context exploration and codebase analysis"
+    }
+  ]
+}

@@ -1,0 +1,347 @@
+#!/usr/bin/env node
+
+/**
+ * Zed subagent model selector
+ * Config: ~/.agents/skills/use-subagent/config/config.json
+ *
+ * Defaults when options are not specified in type config:
+ *   - effort: "medium"
+ *   - enable_thinking: false
+ */
+
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
+import { homedir } from 'os';
+import { join, basename } from 'path';
+
+const SCRIPT_NAME = basename(process.argv[1] || 'zsetagent');
+const SKILL_NAME = 'use-subagent';
+const SKILL_DIR = join(homedir(), '.agents', 'skills', SKILL_NAME);
+const CONFIG_DIR = join(SKILL_DIR, 'config');
+const CONFIG_PATH = join(CONFIG_DIR, 'config.json');
+
+// =============================================================================
+// Defaults
+// =============================================================================
+
+const DEFAULTS = {
+  effort: 'medium',
+  enable_thinking: false
+};
+
+// =============================================================================
+// Config Loading
+// =============================================================================
+
+function loadConfig() {
+  if (!existsSync(CONFIG_PATH)) {
+    console.error(`${SCRIPT_NAME}: Config not found at ${CONFIG_PATH}`);
+    console.error('Edit the config file with your preferred models.');
+    process.exit(1);
+  }
+
+  try {
+    const raw = readFileSync(CONFIG_PATH, 'utf-8');
+    const config = JSON.parse(raw);
+
+    if (!config.types || !Array.isArray(config.types) || config.types.length === 0) {
+      console.error(`${SCRIPT_NAME}: No types defined in config`);
+      process.exit(1);
+    }
+
+    return config;
+  } catch (err) {
+    console.error(`${SCRIPT_NAME}: Failed to parse config: ${err.message}`);
+    process.exit(1);
+  }
+}
+
+// =============================================================================
+// Display Functions
+// =============================================================================
+
+function displayList(types) {
+  types.forEach(t => {
+    console.log(`${t.type.padEnd(16)} ${t.model}`);
+  });
+}
+
+// =============================================================================
+// Settings Update
+// =============================================================================
+
+function updateSettings(typeInfo) {
+  const settingsPath = join(homedir(), '.config', 'zed', 'settings.json');
+
+  let rawContent;
+  try {
+    rawContent = readFileSync(settingsPath, 'utf-8');
+  } catch (err) {
+    console.error(`${SCRIPT_NAME}: Failed to read settings: ${err.message}`);
+    process.exit(1);
+  }
+
+  // Update model
+  const modelPattern = /("subagent_model":\s*\{[^}]*"model":\s*)"[^"]*"/;
+  const modelMatch = rawContent.match(modelPattern);
+
+  if (modelMatch) {
+    rawContent = rawContent.replace(modelPattern, `$1"${typeInfo.model}"`);
+  } else {
+    console.error(`${SCRIPT_NAME}: Could not find subagent_model.model in config`);
+    process.exit(1);
+  }
+
+  // Update provider if specified
+  if (typeInfo.provider) {
+    const providerPattern = /("subagent_model":\s*\{[^}]*"provider":\s*)"[^"]*"/;
+    const providerMatch = rawContent.match(providerPattern);
+    if (providerMatch) {
+      rawContent = rawContent.replace(providerPattern, `$1"${typeInfo.provider}"`);
+    }
+  }
+
+  // Update effort (use default if not specified)
+  const effortValue = typeInfo.effort || DEFAULTS.effort;
+  const effortPattern = /("subagent_model":\s*\{[^}]*"effort":\s*)"[^"]*"/;
+  const effortMatch = rawContent.match(effortPattern);
+  if (effortMatch) {
+    rawContent = rawContent.replace(effortPattern, `$1"${effortValue}"`);
+  }
+
+  // Update enable_thinking (use default if not specified)
+  const thinkingValue = typeInfo.enable_thinking !== undefined ? typeInfo.enable_thinking : DEFAULTS.enable_thinking;
+  const thinkingPattern = /("subagent_model":\s*\{[^}]*"enable_thinking":\s*)(true|false)/;
+  const thinkingMatch = rawContent.match(thinkingPattern);
+  if (thinkingMatch) {
+    rawContent = rawContent.replace(thinkingPattern, `$1${thinkingValue}`);
+  }
+
+  try {
+    writeFileSync(settingsPath, rawContent, 'utf-8');
+    console.log(`${SCRIPT_NAME}: ✓ ${typeInfo.type}`);
+    console.log(`${typeInfo.desc}`);
+    if (!typeInfo.effort) {
+      console.log(`  (effort: ${DEFAULTS.effort} [default])`);
+    }
+    if (typeInfo.enable_thinking === undefined) {
+      console.log(`  (enable_thinking: ${DEFAULTS.enable_thinking} [default])`);
+    }
+  } catch (err) {
+    console.error(`${SCRIPT_NAME}: Failed to write settings: ${err.message}`);
+    process.exit(1);
+  }
+}
+
+// =============================================================================
+// Skill Generation
+// =============================================================================
+
+function generateSkillContent(config) {
+  const { types } = config;
+
+  let skillContent = `---
+name: ${SKILL_NAME}
+description: Instructions for spawning and managing Zed subagents with different model types. Use when delegating work to subagents, running parallel tasks, or selecting optimal model for specific workload.
+---
+
+# Zed Subagent Delegation
+
+To spawn a subagent, alwyas select the optimal model type before calling the \`spawn_agent\` by running with \`bash\` tool:
+\`\`\`bash
+${SCRIPT_NAME} <type>
+\`\`\`
+
+After setting the type, immediately spawn the subagent. Follow this sequence:
+
+1. Change type with \`bash\`
+2. Call \`spawn_agent\` with the task prompt
+
+**When to skip the type change**: Only skip calling \`zsetagent\` if you're spawning the same type you just used. If unsure, always change type — don't waste time checking or guessing.
+Parallel subagents can only be used if they are of the same type!.
+
+**Important**: Subagents are NOT pre-trained or pre-instructed; but they use different model for different task. You must provide full context, clear instructions, and all details needed for the task in your spawn prompt.
+
+### Examples
+
+**Different type** (must call \`zsetagent\` first):
+1) \`bash: "zsetagent exploring"\` //change the type
+2) \`spawn_agent\` //spawn an agent of type \`exploring\` , pass prompt and context as normal
+
+3) \`bash: "zsetagent coding"\` //change the type
+4) \`spawn_agent\` //spawn an agent of type \`coding\`
+
+
+**Same type** (can skip \`zsetagent\`):
+**Different type** (must call \`zsetagent\` first):
+1) \`bash: "zsetagent exploring"\` //change the type
+2) \`spawn_agent\` //spawn an agent of type \`exploring\`, pass prompt and context as normal
+3) \`spawn_agent\` //spawn another agent of type \`exploring\`
+
+
+**NEVER DO THIS**:
+1) \`bash: "zsetagent exploring"\` //change the type
+1) \`bash: "zsetagent coding"\` //change the type again
+3) \`spawn_agent\` //this will spawn an agent of type \`coding\`
+4) \`spawn_agent\` //this will also spawn an agent of type \`coding\`
+
+
+## Available Types
+
+| Type | Best For |
+|------|----------|
+`;
+
+  types.forEach(t => {
+    skillContent += `| \`${t.type}\` | ${t.desc} |\n`;
+  });
+
+  skillContent += `
+## Behavior Rules
+
+- Setting persists across spawns. Multiple subagents of same type = no re-run needed
+- Always change type before spawning different role
+- Returns immediately after update
+- All models have a small context (except explorer) — don't ask for huge tasks
+- If a subagent errors because of max tokens, read what the agent has done so far, don't repeat all the work
+- "Well described small task" is better than "poorly described big task"
+- Give subagent just the context and references they need for their task, well organized
+- **Subagents need full instructions**: They are fresh instances with no prior context or training — explain everything in detail
+
+**Always include in every subagent prompt:**
+\`\`\`
+You are running as a subagent, you should report to your coordinator. Don't spawn any subagent yourself. If you don't have enough information to work on your task or the instructions are not clear, report immediately.
+You often share the same AGENTS.md/CLAUDE.md as your coordinator, **YOU ARE A SUBAGENT** no matter what other context might tell you.
+\`\`\`
+
+## Type-Specific Instructions
+
+`;
+
+  // Load instruction files for each type
+  for (const t of types) {
+    const instructionFile = join(CONFIG_DIR, `${t.type}.md`);
+    if (existsSync(instructionFile)) {
+      const instructions = readFileSync(instructionFile, 'utf-8').trim();
+      skillContent += `### \`${t.type}\`\n\n${instructions}\n\n`;
+    }
+  }
+
+  skillContent += `## Examples
+
+\`\`\`bash
+`;
+
+  types.forEach(t => {
+    skillContent += `${SCRIPT_NAME} ${t.type}\n`;
+  });
+
+  skillContent += `\`\`\`
+
+`;
+
+  return skillContent;
+}
+
+function generateSkill(config, force = false) {
+  const skillPath = join(SKILL_DIR, 'SKILL.md');
+
+  if (existsSync(skillPath) && !force) {
+    console.error(`${SCRIPT_NAME}: Skill already exists at ${skillPath}`);
+    console.error(`Use --force to overwrite`);
+    process.exit(1);
+  }
+
+  const skillContent = generateSkillContent(config);
+
+  try {
+    if (!existsSync(SKILL_DIR)) {
+      mkdirSync(SKILL_DIR, { recursive: true });
+    }
+
+    writeFileSync(skillPath, skillContent, 'utf-8');
+    console.log(`${SCRIPT_NAME}: ✓ Skill generated at ${skillPath}`);
+    if (force) {
+      console.log('  (overwritten with --force)');
+    }
+  } catch (err) {
+    console.error(`${SCRIPT_NAME}: Failed to write skill: ${err.message}`);
+    process.exit(1);
+  }
+}
+
+// =============================================================================
+// Main
+// =============================================================================
+
+function main() {
+  const config = loadConfig();
+  const TYPE_MAP = Object.fromEntries(config.types.map(t => [t.type, t]));
+  const args = process.argv.slice(2);
+
+  // Handle --skill generation
+  if (args.includes('--skill')) {
+    const force = args.includes('--force');
+    generateSkill(config, force);
+    process.exit(0);
+  }
+
+  // Handle --help
+  if (args[0] === '--help' || args[0] === '-h') {
+    console.log(`
+Usage: ${SCRIPT_NAME} [options] [type]
+
+Selects a Zed subagent model type and updates settings.
+
+Arguments:
+  type              Subagent type to activate (see --list)
+
+Options:
+  --list            List available types
+  --skill           Generate skill file (~/.agents/skills/${SKILL_NAME}/SKILL.md)
+  --force           Overwrite existing skill file (use with --skill)
+
+Examples:
+  ${SCRIPT_NAME}              # Show available types
+  ${SCRIPT_NAME} --list       # Show detailed type list
+  ${SCRIPT_NAME} exploring    # Set 'exploring' as subagent type
+  ${SCRIPT_NAME} --skill      # Generate skill file
+
+Config: ${CONFIG_PATH}
+`);
+    process.exit(0);
+  }
+
+  // Handle --list
+  if (args[0] === '--list') {
+    console.log(`
+Available subagent types:
+`);
+    config.types.forEach(t => {
+      console.log(`  ${t.type.padEnd(16)} — ${t.desc}`);
+    });
+    console.log(`
+Usage: ${SCRIPT_NAME} <type>
+`);
+    process.exit(0);
+  }
+
+  // Default: show list
+  if (args.length === 0) {
+    displayList(config.types);
+    process.exit(0);
+  }
+
+  // Handle type selection
+  const type = args[0].toLowerCase().trim();
+  const typeInfo = TYPE_MAP[type];
+
+  if (!typeInfo) {
+    console.error(`${SCRIPT_NAME}: Unknown type "${args[0]}"`);
+    console.error(`Run "${SCRIPT_NAME} --list" to see available types`);
+    process.exit(1);
+  }
+
+  updateSettings(typeInfo);
+}
+
+main();
